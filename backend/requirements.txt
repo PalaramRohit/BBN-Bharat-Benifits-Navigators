@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+motor
+pydantic-settings
+python-dotenv
+firebase-admin
+openai
+google-generativeai
+faiss-cpu
+sentence-transformers
+numpy
+scipy
+scikit-learn
+twilio
+gTTS
+python-multipart

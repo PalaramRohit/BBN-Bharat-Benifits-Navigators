@@ -1,0 +1,203 @@
+# Working Mechanism of the JanSetu Dashboard and Backend
+
+This file is written in plain English so you can quickly explain how the system works during a demo or interview. Read it aloud or refer to it when the judges ask "how does this thing actually do what it does?"
+
+---
+
+## 1. How a User Sees the System
+
+When someone opens the JanSetu web app in a browser they interact with a React-based dashboard. The top-level component (`App.tsx`) sets up a few helpers:
+
+- a **query client** (for caching network requests),
+- the custom **BBN context** that holds all the shared state,
+- a **tooltip provider** for UI hints,
+- and a **router** for navigation between pages.
+
+These wrappers let the rest of the app call a simple hook, `useBBN()`, to read user information, show modals, or run queries.
+
+If the user chooses "Assisted Mode" (helpful for seniors or agents), the `ModeAwareRoutes` component notices that flag and sends them to a separate assisted dashboard automatically.
+
+The main dashboard page (`pages/Index.tsx`) composes many smaller pieces: the header, the sidebar, a search bar, and content panels such as:
+
+- **Eligibility Overview** – shows how many schemes the person qualifies for and a rough monthly benefit amount.
+- **Recommended Schemes** – lists individual policies with quick actions.
+- **Simulator Gauge** – a circular widget where the user picks a scheme and sees a simulated approval probability.
+- **Required Documents** – shows what paperwork the person should gather.
+
+Each panel is a React component that simply calls `const bbn = useBBN();` and uses whatever values or functions it needs. That keeps the logic centralized in one place.
+
+Searches and button clicks eventually call `bbn.runQuery(...)`, which is the main action that reaches out to the backend.
+
+The context also handles:
+- looking up an Aadhaar number and populating the profile,
+- showing a modal when the profile is incomplete,
+- toggling the AI mode (online/offline),
+- tracking whether a scheme application is in progress,
+- and automatically turning on assisted mode for citizens over 50.
+
+## 2. What the Context (BBNContext.tsx) Does
+
+`BBNContext.tsx` is the heart of the frontend state. It defines a TypeScript interface listing every piece of data and every helper function the UI might need.
+
+Under the hood there are many `useState` hooks storing things like:
+
+- the current user profile (name, age, state, etc.),
+- the last query’s response from the backend,
+- which scheme is selected or whether a modal is open,
+- loading and error flags,
+- the currently selected AI mode and whether it’s loading,
+- and whether the app is simulating or actually applying.
+
+There are convenience helpers such as `setAadhaar()` which takes an Aadhaar string, hits the backend endpoint `/citizen/by-aadhaar/<number>`, stores the returned profile, and performs an initial eligibility query automatically. If the Aadhaar isn’t found it shows the profile completion modal instead.
+
+`runQuery()` is the largest function: it calls the `/query` endpoint with whatever text the user typed and optionally a profile override or Aadhaar. It updates the state when the response arrives and also handles a special "simulate" mode where the UI fakes a result for demonstration purposes.
+
+Other methods let components toggle assisted mode, start or cancel a scheme application, or reset everything back to blank.
+
+Because every component uses the same context hook, state flows freely and the dashboard always stays in sync.
+
+## 3. The Backend’s Public API
+
+The backend is a FastAPI application under `backend/app` with a single router defined in `app/api/v1/endpoints.py`.
+
+Endpoints you’ll care about:
+
+- **`POST /query`** – this is the intelligence engine. It accepts a text query, an optional profile object, and/or an Aadhaar number. It returns a JSON payload with eligible schemes, predictions, explanations, and so on.
+
+- **`GET /citizen/by-aadhaar/{aadhaar}`** – the frontend calls this when the user types an Aadhaar number. It looks up the number in a fake registry (`backend/data/citizens.json`) and returns basic demographic fields. If the Aadhaar isn’t in the file it returns a 404.
+
+- **`/llm/mode`** and **`/auth/*`** endpoints support toggling the AI mode and a simple OTP flow used elsewhere in the app.
+
+The query handler doesn’t do any work itself – it just forwards the request to a global `orchestrator` object and returns whatever the orchestrator produces.
+
+## 4. Inside the Orchestrator
+
+`app/orchestration/orchestrator.py` contains the class `BharatOrchestrator`, which acts like the brain of the backend. When `orchestrator.run_query(...)` is called, the following steps happen:
+
+1. **Aadhaar/profile check** – if the request didn’t include a profile and only had "guest" as the user, the orchestrator asks the caller to provide an Aadhaar number first. If a number is provided it attempts to load a fresh profile from the registry.
+
+2. **Profile completeness** – if the profile lacks required fields (age, state, gender, occupation), the orchestrator returns a message asking the UI to collect the missing data.
+
+3. **RAG retrieval** – the orchestrator uses a retrieval-augmented generation helper to pull relevant policies. It always includes central schemes plus those for the user’s state. It merges strict state-scoped matches with semantic search results.
+
+4. **Eligibility intelligence** – it runs each candidate policy through the `EligibilityAgent`, which applies rule-based checks and returns whether the profile satisfies the criteria.
+
+5. **ML scoring** – the top policy is fed to the `prediction_service` which returns a likelihood of approval and an impact score; this is used for the simulator gauge.
+
+6. **Decision engine** – the `DecisionEngine` synthesizes the eligibility results and ML scores to produce actionable advice (missing documents, optimization suggestions, etc.).
+
+7. **Case ID & RTA summary** – the `CaseService` assigns a unique case ID and builds a readiness/technology-assistance summary that the frontend shows in the documents panel.
+
+8. **LLM explanation** – the `ExplanationAgent` (another rule-based/LLM hybrid) writes a human-readable explanation of why the top eligible scheme applies.
+
+9. **Pathway detection** – if the person needs a nonstandard application path (e.g. waivers, special assistance), the `PathwayDetector` flags that and a simplified RTA is generated.
+
+Each step adds data to a dictionary. At the end, `self._json_safe()` cleans the object to replace NaN or infinite numbers with `null`, ensuring the JSON encoder never crashes. That final dictionary is what the frontend receives.
+
+## 5. Supporting Modules – What They Are
+
+To make the orchestrator’s code easier to follow, the project is split into several folders:
+
+- **`app/agents`** – contains `EligibilityAgent` (checks eligibility criteria) and `ExplanationAgent` (builds explanatory text). They extend a common base class that handles prompts and context.
+
+- **`app/decision`** – houses the `DecisionEngine`, `CaseService` (case ID generation, RTA summary), `pathway_detector.py`, and an `optimization_engine.py` that can suggest better schemes if the user’s current selection is suboptimal.
+
+- **`app/intelligence`** – wraps low-level ML models and LLM client code. `llm_service.py` abstracts calls to OpenAI or an offline LLM depending on the mode.
+
+- **`app/policies`** – defines the `Policy` Pydantic model and includes `scheme_rules.py`, a small helper that knows about state restrictions or other hard rules per scheme.
+
+- **`app/users`** – provides a `CitizenService` which reads the JSON file (`backend/data/citizens.json`) and returns `UserProfile` objects that the orchestrator, jets.
+
+- **`app/utils`** – miscellaneous helpers like `rag_retriever` (vector store access), `bulk_processor.py` (batching operations), and `llm_client.py` (HTTP wrapper for the chosen LLM).
+
+Each submodule is kept intentionally small; the orchestrator is the only part of the code that ties them together in sequence.
+
+## 6. Data Storage
+
+The system uses static JSON files for data:
+
+- `citizens.json` is a synthetic registry of tens of thousands of records keyed by Aadhaar. Real deployments would swap this out for a proper database, but for the hackathon the file works fine.
+
+- `policies.json` contains the text and metadata of every scheme the RAG engine can retrieve. It’s indexed by state, keywords, and policy IDs.
+
+Because everything is file-based, the backend is trivially portable and can be run locally without any external dependencies beyond Python and the required packages.
+
+## 7. Dashboard Capabilities – What Judges See
+
+Here’s what you can point to during a live demo:
+
+- **Eligibility Overview** – highlights how many schemes the user is entitled to, sorted by central vs. state. You can show how updating the profile (e.g. changing income or age) immediately updates the counts.
+
+- **Simulator** – click the dropdown, pick a scheme, and watch the gauge update. The backend returns a probability, but the UI will also let you simulate even when offline.
+
+- **Documents panel** – shows exactly which documents are required for the chosen scheme. This is pulled from the `DecisionEngine` logic and demonstrates actionable guidance.
+
+- **Recommended Schemes** – scroll through individual items, open the details modal, and show the generated explanation text. You can highlight the `reason_eligible` field, which extracts matched criteria.
+
+- **Profile completion modal** – type an unknown Aadhaar and the modal pops up with fields. Fill it in to show how the system handles missing data gracefully.
+
+- **Assisted mode** – toggle it on and watch the router send you to `/assisted-dashboard` where the layout is simpler and the search bar is front and center.
+
+- **LLM Modes** – switch between online and offline; if you have the offline model available, you can show the explanation engine still works without an internet connection. Otherwise, just explain the toggle.
+
+- **Optimization & Insights Tabs** – click through these to show analytical graphs or optimization suggestions if you’ve prepared some sample data.
+
+Everything in the dashboard is driven by the same backend logic, so the judges can ask questions about eligibility and see the answer instantly.
+
+## 8. Typical Query Flow – Step by Step
+
+1. The user types a question ("What schemes can I apply for?") or clicks a sidebar option.
+2. `Index.tsx` calls the `runQuery` function coming from `BBNContext`.
+3. `runQuery` sends an HTTP POST to `/query`, including the current profile and/or Aadhaar stored in context.
+4. The backend receives the request and the orchestrator begins its multi-step reasoning (see section 4).
+5. After all submodules complete, a JSON response returns to the frontend:
+   - lists of eligible and ineligible schemes,
+   - a monthly benefit estimate,
+   - an ML prediction with approval likelihood,
+   - document advice,
+   - an explanatory paragraph,
+   - and other metadata such as case ID and reasoning details.
+6. The context updates its state with this response, which triggers React to re-render all subscribed components.
+7. UI elements such as the eligibility overview or simulator gauge reflect the new data. If a scheme was selected it remains highlighted.
+8. Reaction to the user is immediate; you can demonstrate this by changing profile fields or running a new query.
+
+React-query further caches the response so navigating away and back again is fast.
+
+## 9. Developer Notes – Running the Project Locally
+
+To start the backend:
+
+```sh
+cd backend
+env\Scripts\activate   # or use your preferred virtualenv/conda
+pip install -r requirements.txt
+uvicorn backend.app.main:app --reload
+```
+
+The server will be available at `http://127.0.0.1:8000`.
+
+To start the frontend:
+
+```sh
+cd frontend_repo
+npm install
+npm run dev
+```
+
+Vite will serve the UI on `http://localhost:5173` and proxy API calls to the backend automatically.
+
+There are some tests defined (look under `backend/tests` and `frontend_repo/src/test`) if you want to run them.
+
+## 10. Key Talking Points for Judges
+
+When presenting:
+
+- emphasize the **modularity**: each feature (eligibility, explanation, decision, prediction) lives in its own folder and can be swapped or improved independently.
+- note the **human-centric design**: modals guide users through missing information, and probability gauges give intuitive feedback.
+- highlight the **AI/ML integration**: the system blends rule-based eligibility with machine learning predictions and an LLM-powered explanation engine.
+- mention the **accessibility features** like assisted mode and the ability to operate offline.
+- point out how the system can be audited: requests and responses include `reasoning_details` that expose the internal decision logic.
+
+---
+
+This rewritten document should be easier to read aloud during a demo and explain each part of the codebase clearly. Use it as your preparation script.

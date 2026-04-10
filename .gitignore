@@ -1,0 +1,45 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend_repo/.env
+frontend_repo/.env.*
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / frontend
+frontend_repo/node_modules/
+frontend_repo/dist/
+frontend_repo/dist-ssr/
+*.tsbuildinfo
+
+# Logs and runtime output
+*.log
+*.out
+*.err
+backend/uvicorn_*.log
+backend/uvicorn_*.out
+backend/uvicorn_*.err
+backend/sp_test.out
+backend/sp_test.err
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local git metadata from nested repos
+frontend_repo/.git/

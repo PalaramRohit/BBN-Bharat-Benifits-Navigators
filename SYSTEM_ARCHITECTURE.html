@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>System Architecture & File Structure</title>
+    <script type="module" src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({ startOnLoad: true, theme: 'neutral' });</script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 2rem; }
+        pre { background: #f4f4f4; padding: 1rem; overflow-x: auto; }
+        h1, h2, h3 { color: #333; }
+        .diagram { margin: 2rem 0; }
+    </style>
+</head>
+<body>
+    <h1>JanSetu Project - File Structure & Architecture</h1>
+
+    <h2>1. Core File Structure</h2>
+    <pre>
+backend/
+  app/
+    api/
+      v1/endpoints.py
+    agents/
+    decision/
+    intelligence/
+    orchestration/orchestrator.py
+    policies/
+    users/
+    utils/
+  data/
+    citizens.json
+    policies.json
+  requirements.txt
+
+frontend_repo/
+  src/
+    components/
+    context/BBNContext.tsx
+    pages/Index.tsx
+    App.tsx
+    hooks/
+    lib/
+    assets/
+  package.json
+  tsconfig.json
+  vite.config.ts
+</pre>
+
+    <h2>2. Architecture Diagrams</h2>
+
+    <div class="diagram">
+        <h3>2.1 High-level System Flow</h3>
+        <div class="mermaid">
+            graph LR
+                A[User (Browser)] -->|query| B(React Frontend)
+                B -->|POST /query| C(FastAPI Backend)
+                C --> D[Orchestrator]
+                D --> E[EligibilityAgent]
+                D --> F[PredictionService]
+                D --> G[DecisionEngine]
+                D --> H[ExplanationAgent]
+                D --> I[CitizenService]
+                I --> J[citizens.json]
+                D --> K[RAG Retriever]
+                K --> L[policies.json]
+                D --> M[CaseService]
+                M --> N[Response Payload]
+                N --> C --> B --> A
+        </div>
+    </div>
+
+    <div class="diagram">
+        <h3>2.2 Frontend Component Interaction</h3>
+        <div class="mermaid">
+            graph TD
+                App[App.tsx]
+                BBN[BBNContext]
+                Index[Index.tsx]
+                Elig[EligibilityOverview]
+                Sim[SimulatorGauge]
+                Docs[RequiredDocuments]
+
+                App --> BBN
+                BBN --> Index
+                Index --> Elig
+                Index --> Sim
+                Index --> Docs
+                BBN -->|useBBN()| Elig
+                BBN -->|useBBN()| Sim
+                BBN -->|useBBN()| Docs
+        </div>
+    </div>
+
+    <h2>3. Notes</h2>
+    <p>This HTML file summarizes the file hierarchy and runtime flow of the JanSetu system. Mermaid diagrams illustrate how components connect in the frontend and how the backend orchestrator invokes sub-modules and returns data.</p>
+</body>
+</html>
